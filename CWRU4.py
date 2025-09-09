@@ -188,9 +188,9 @@ class CWRUCNN_LightSE(nn.Module):
 
 
 
-class MultiScaleCNN_Easy(nn.Module):
+class MultiScaleCNN(nn.Module):
     def __init__(self, input_size, num_classes=4):
-        super(MultiScaleCNN_Easy, self).__init__()
+        super(MultiScaleCNN, self).__init__()
         # 第一层多尺度卷积并联
         self.conv3 = nn.Conv1d(1, 16, kernel_size=3, stride=1, padding=1)
         self.conv5 = nn.Conv1d(1, 16, kernel_size=5, stride=1, padding=2)
@@ -516,7 +516,7 @@ def visualize_single_sample_shap(shap_values_dict, sample_data_dict, feature_nam
         plt.tight_layout()
         plt.savefig(f'single_sample_shap_{class_names[cls].replace(" ", "_")}.png', dpi=300, bbox_inches='tight')
         plt.show()
-
+   
 
 # ====================== 8. 主函数（支持跳过训练） ======================
 if __name__ == "__main__":
@@ -640,7 +640,7 @@ if __name__ == "__main__":
     print(f"[7/10] 处理TOP特征模型（输入尺寸={len(selected_features)}）...")
     #model_top = CWRUCNN(input_size=len(selected_features), num_classes=4)
    
-    model_top = MultiScaleCNN_Easy(input_size=len(selected_features), num_classes=4)
+    model_top = MultiScaleCNN(input_size=len(selected_features), num_classes=4)
     criterion_top = nn.CrossEntropyLoss()
     optimizer_top = optim.Adam(model_top.parameters(), lr=learning_rate)
     model_save_path_top = 'best_cwru_top_model.pth'
