@@ -244,6 +244,9 @@ class MultiScaleCNN(nn.Module):
     
 # ====================== 3. 训练函数（增加保存路径参数） ======================
 def train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs=50, device='cuda', model_save_path='best_cwru_model.pth'):
+    torch.backends.cudnn.benchmark = True
+    if device == 'cuda':
+        torch.cuda.empty_cache()
     model.to(device)
     best_val_acc = 0.0
 
@@ -251,7 +254,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
     train_accuracies = []
     val_losses = []
     val_accuracies = []
-
+    
     for epoch in range(num_epochs):
         model.train()
         running_loss, correct, total = 0.0, 0, 0
@@ -268,9 +271,9 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
             _, predicted = torch.max(outputs, 1)
             correct += (predicted == labels).sum().item()
             total += labels.size(0)
-
+            
            
-
+        
         epoch_train_loss = running_loss / total
         epoch_train_acc = correct / total
         train_losses.append(epoch_train_loss)
@@ -288,7 +291,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
                 _, predicted = torch.max(outputs, 1)
                 val_correct += (predicted == labels).sum().item()
                 val_total += labels.size(0)
-
+                
         epoch_val_loss = running_val_loss / val_total
         epoch_val_acc = val_correct / val_total
         val_losses.append(epoch_val_loss)
@@ -521,6 +524,8 @@ def visualize_single_sample_shap(shap_values_dict, sample_data_dict, feature_nam
 # ====================== 8. 主函数（支持跳过训练） ======================
 if __name__ == "__main__":
     torch.manual_seed(42)
+    torch.backends.cudnn.benchmark = True  # 启用 cudnn benchmark模式
+    torch.backends.cuda.matmul.allow_tf32 = True  # 启用 TF32 加速
     # root_dir = r"D:\本科毕业设计\可解释性机器学习\频域特征提取\cwru1"
     root_dir = r"E:\Artifical intelligence 666\\某人的本科毕设\\本科毕业设计\\可解释性机器学习\\数据预处理\\cwru数据集处理后"
     batch_size = 32
@@ -547,9 +552,9 @@ if __name__ == "__main__":
     train_dataset, val_dataset, test_dataset = random_split(
         dataset_original, [train_size, val_size, test_size], generator=torch.Generator().manual_seed(42)
     )
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=1)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=1)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=1)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
 
     # 2. 原始模型处理
     print("[2/10] 处理原始模型...")
@@ -632,9 +637,9 @@ if __name__ == "__main__":
     train_dataset_top, val_dataset_top, test_dataset_top = random_split(
         dataset_top, [train_size_top, val_size_top, test_size_top], generator=torch.Generator().manual_seed(42)
     )
-    train_loader_top = DataLoader(train_dataset_top, batch_size=batch_size, shuffle=True, num_workers=1)
-    val_loader_top = DataLoader(val_dataset_top, batch_size=batch_size, shuffle=False, num_workers=1)
-    test_loader_top = DataLoader(test_dataset_top, batch_size=batch_size, shuffle=False, num_workers=1)
+    train_loader_top = DataLoader(train_dataset_top, batch_size=batch_size, shuffle=True, num_workers=0)
+    val_loader_top = DataLoader(val_dataset_top, batch_size=batch_size, shuffle=False, num_workers=0)
+    test_loader_top = DataLoader(test_dataset_top, batch_size=batch_size, shuffle=False, num_workers=0)
 
     # 5. 筛选后模型处理
     print(f"[7/10] 处理TOP特征模型（输入尺寸={len(selected_features)}）...")
