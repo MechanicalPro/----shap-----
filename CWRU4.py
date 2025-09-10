@@ -568,9 +568,13 @@ if __name__ == "__main__":
 
     if not skip_original_training:
         print("[2-1] 训练原始模型...")
+        import time
+        t1_start = time.time()
         model_save_path_original, train_losses_original, train_accuracies_original, val_losses_original, val_accuracies_original = train_model(
             model_original, train_loader, val_loader, criterion, optimizer, num_epochs, device, model_save_path_original
         )
+        t1 = time.time() - t1_start
+        print(f"原始模型训练时间: {t1:.2f} 秒")
     else:
         print("[2-2] 跳过原始模型训练，直接加载已有模型...")
         if not os.path.exists(model_save_path_original):
@@ -643,7 +647,7 @@ if __name__ == "__main__":
 
     # 5. 筛选后模型处理
     print(f"[7/10] 处理TOP特征模型（输入尺寸={len(selected_features)}）...")
-    #model_top = CWRUCNN(input_size=len(selected_features), num_classes=4)
+    
    
     model_top = MultiScaleCNN(input_size=len(selected_features), num_classes=4)
     criterion_top = nn.CrossEntropyLoss()
@@ -652,9 +656,12 @@ if __name__ == "__main__":
 
     if not skip_top_training:
         print("[7-1] 训练TOP特征模型...")
+        t2_start = time.time()
         model_save_path_top, train_losses_top, train_accuracies_top, val_losses_top, val_accuracies_top = train_model(
             model_top, train_loader_top, val_loader_top, criterion_top, optimizer_top, num_epochs, device, model_save_path_top
         )
+        t2 = time.time() - t2_start
+        print(f"TOP特征模型训练时间: {t2:.2f} 秒")
     else:
         print("[7-2] 跳过TOP特征模型训练，直接加载已有模型...")
         if not os.path.exists(model_save_path_top):
