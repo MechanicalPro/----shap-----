@@ -132,8 +132,76 @@ class CWRUCNN(nn.Module):
         x = x.view(x.size(0), -1)
         x = self.fc_layers(x)
         return x
+# 在您的代码中添加以下模型：
 
+# 1. 简单CNN（最轻量）
+class SimpleCNN(nn.Module):
+    def __init__(self, input_size, num_classes=4):
+        super(SimpleCNN, self).__init__()
+        self.conv_layers = nn.Sequential(
+            nn.Conv1d(1, 8, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+            nn.Conv1d(8, 16, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool1d(2)
+        )
+        fc_input_size = (input_size // 4) * 16
+        self.fc = nn.Sequential(
+            nn.Linear(fc_input_size, 32),
+            nn.ReLU(),
+            nn.Linear(32, num_classes)
+        )
+    
+    def forward(self, x):
+        x = x.unsqueeze(1)
+        x = self.conv_layers(x)
+        x = x.view(x.size(0), -1)
+        return self.fc(x)
 
+# 2. 深层CNN（更重）
+class DeepCNN(nn.Module):
+
+    def __init__(self, input_size, num_classes=4):
+        super(DeepCNN, self).__init__()
+        self.conv_layers = nn.Sequential(
+            nn.Conv1d(1, 32, kernel_size=3, padding=1),
+            nn.BatchNorm1d(32),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+            
+            nn.Conv1d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+            
+            nn.Conv1d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+            
+            nn.Conv1d(128, 256, kernel_size=3, padding=1),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.MaxPool1d(2)
+        )
+        fc_input_size = (input_size // 16) * 256
+        self.fc = nn.Sequential(
+            nn.Linear(fc_input_size, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, 128),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(128, num_classes)
+        )
+    
+    def forward(self, x):
+        x = x.unsqueeze(1)
+        x = self.conv_layers(x)
+        x = x.view(x.size(0), -1)
+        return self.fc(x)
+    
 class LightSEModule(nn.Module):
     def __init__(self, channels, reduction=32):
         super().__init__()
@@ -185,8 +253,6 @@ class CWRUCNN_LightSE(nn.Module):
         x = x.view(x.size(0), -1)
         x = self.fc_layers(x)
         return x
-
-
 
 class MultiScaleCNN(nn.Module):
     def __init__(self, input_size, num_classes=4):
@@ -241,7 +307,392 @@ class MultiScaleCNN(nn.Module):
         x = x.reshape(x.size(0), -1)
         x = self.fc_layers(x)
         return x  # 加上这一行
+
+# ResNet18的基本残差块
+class BasicBlock1D(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
+        super(BasicBlock1D, self).__init__()
+        self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm1d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm1d(out_channels)
+        self.downsample = downsample
+        self.stride = stride
+
+    def forward(self, x):
+        identity = x
+        
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        
+        out = self.conv2(out)
+        out = self.bn2(out)
+        
+        if self.downsample is not None:
+            identity = self.downsample(x)
+            
+        out += identity
+        out = self.relu(out)
+        
+        return out
+
+class ResNet18_1D(nn.Module):
+    def __init__(self, input_size, num_classes=4):
+        super(ResNet18_1D, self).__init__()
+        self.in_channels = 64
+        
+        # 初始卷积层
+        self.conv1 = nn.Conv1d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = nn.BatchNorm1d(64)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool1d(kernel_size=3, stride=2, padding=1)
+        
+        # ResNet层
+        self.layer1 = self._make_layer(64, 2, stride=1)
+        self.layer2 = self._make_layer(128, 2, stride=2)
+        self.layer3 = self._make_layer(256, 2, stride=2)
+        self.layer4 = self._make_layer(512, 2, stride=2)
+        
+        # 全局平均池化和分类器
+        self.avgpool = nn.AdaptiveAvgPool1d(1)
+        self.fc = nn.Linear(512, num_classes)
+        
+        # 初始化权重
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    def _make_layer(self, out_channels, blocks, stride=1):
+        downsample = None
+        if stride != 1 or self.in_channels != out_channels:
+            downsample = nn.Sequential(
+                nn.Conv1d(self.in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm1d(out_channels),
+            )
+
+        layers = []
+        layers.append(BasicBlock1D(self.in_channels, out_channels, stride, downsample))
+        self.in_channels = out_channels
+        for _ in range(1, blocks):
+            layers.append(BasicBlock1D(out_channels, out_channels))
+
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        x = x.unsqueeze(1)  # (batch_size, 1, input_size)
+        
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.fc(x)
+
+        return x
+
+class CWRUCNN_LightSE_Optimized(nn.Module):
+    def __init__(self, input_size, num_classes=4):
+        super().__init__()
+        
+        # 第一层 - 减少通道数
+        self.conv1 = nn.Conv1d(1, 12, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm1d(12)
+        self.se1 = OptimizedLightSEModule(12, reduction=8)  # 更小的reduction
+        self.pool1 = nn.MaxPool1d(2)
+
+        # 第二层
+        self.conv2 = nn.Conv1d(12, 24, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm1d(24)
+        self.se2 = OptimizedLightSEModule(24, reduction=8)
+        self.pool2 = nn.MaxPool1d(2)
+
+        # 第三层
+        self.conv3 = nn.Conv1d(24, 48, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn3 = nn.BatchNorm1d(48)
+        self.se3 = OptimizedLightSEModule(48, reduction=8)
+        self.pool3 = nn.MaxPool1d(2)
+
+        # 更小的全连接层
+        fc_input_size = (input_size // 8) * 48
+        self.fc_layers = nn.Sequential(
+            nn.Linear(fc_input_size, 64, bias=False),  # 减少到64
+            nn.BatchNorm1d(64),  # 用BN替代Dropout
+            nn.ReLU(inplace=True),
+            nn.Linear(64, num_classes)
+        )
+
+    def forward(self, x):
+        x = x.unsqueeze(1)
+        
+        x = F.relu(self.bn1(self.conv1(x)), inplace=True)
+        x = self.se1(x)
+        x = self.pool1(x)
+        
+        x = F.relu(self.bn2(self.conv2(x)), inplace=True)
+        x = self.se2(x)
+        x = self.pool2(x)
+        
+        x = F.relu(self.bn3(self.conv3(x)), inplace=True)
+        x = self.se3(x)
+        x = self.pool3(x)
+        
+        x = x.view(x.size(0), -1)
+        x = self.fc_layers(x)
+        return x
     
+# 定义 OptimizedLightSEModule
+class OptimizedLightSEModule(nn.Module):
+    def __init__(self, channels, reduction=8):
+        super().__init__()
+        self.avg_pool = nn.AdaptiveAvgPool1d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(channels, max(1, channels // reduction), bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(max(1, channels // reduction), channels, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        b, c, _ = x.size()
+        y = self.avg_pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1)
+        return x * y
+    
+
+class CWRUCNN_LightSE_Ultra(nn.Module):
+    def __init__(self, input_size, num_classes=4):
+        super().__init__()
+        
+        # 使用更小的通道数和优化的SE模块
+        self.conv1 = nn.Conv1d(1, 8, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm1d(8)
+        self.se1 = UltraLightSEModule(8, reduction=4)
+        
+        self.conv2 = nn.Conv1d(8, 16, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm1d(16)
+        self.se2 = UltraLightSEModule(16, reduction=4)
+        
+        self.conv3 = nn.Conv1d(16, 32, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn3 = nn.BatchNorm1d(32)
+        self.se3 = UltraLightSEModule(32, reduction=4)
+        
+        # 计算feature map尺寸: input_size // 8 (三次stride=2)
+        fc_input_size = (input_size // 8) * 32
+        self.fc = nn.Sequential(
+            nn.Linear(fc_input_size, 32, bias=False),
+            nn.BatchNorm1d(32),
+            nn.ReLU(),  # 这里保持不变
+            nn.Linear(32, num_classes)
+        )
+        
+        # 添加SHAP模式标志
+        self.shap_mode = False
+
+    def set_shap_mode(self, mode=True):
+        """设置SHAP分析模式，关闭inplace操作"""
+        self.shap_mode = mode
+        # 同时设置SE模块的SHAP模式
+        self.se1.shap_mode = mode
+        self.se2.shap_mode = mode
+        self.se3.shap_mode = mode
+
+    def forward(self, x):
+        x = x.unsqueeze(1)
+        
+        # 根据模式选择是否使用inplace操作
+        if self.shap_mode:
+            # SHAP模式：不使用inplace
+            x = F.relu(self.bn1(self.conv1(x)))
+            x = self.se1(x)
+            
+            x = F.relu(self.bn2(self.conv2(x)))
+            x = self.se2(x)
+            
+            x = F.relu(self.bn3(self.conv3(x)))
+            x = self.se3(x)
+        else:
+            # 训练模式：使用inplace提升性能
+            x = F.relu(self.bn1(self.conv1(x)), inplace=True)
+            x = self.se1(x)
+            
+            x = F.relu(self.bn2(self.conv2(x)), inplace=True)
+            x = self.se2(x)
+            
+            x = F.relu(self.bn3(self.conv3(x)), inplace=True)
+            x = self.se3(x)
+        
+        x = x.view(x.size(0), -1)
+        return self.fc(x)
+
+# 定义 UltraLightSEModule
+# 修复 UltraLightSEModule 类
+class UltraLightSEModule(nn.Module):
+    def __init__(self, channels, reduction=16):
+        super().__init__()
+        # 使用全局平均池化 + 单个线性层
+        hidden_dim = max(2, channels // reduction)  # 最小为2
+        self.squeeze = nn.AdaptiveAvgPool1d(1)
+        # 动态构建激活层
+        self.linear1 = nn.Linear(channels, hidden_dim, bias=False)
+        self.linear2 = nn.Linear(hidden_dim, channels, bias=False)
+        self.sigmoid = nn.Sigmoid()
+        
+        # SHAP模式标志
+        self.shap_mode = False
+
+    def forward(self, x):
+        b, c = x.size(0), x.size(1)
+        # 高效的squeeze操作
+        y = self.squeeze(x).view(b, c)
+        y = self.linear1(y)
+        
+        # 根据模式选择激活函数
+        if self.shap_mode:
+            y = F.relu(y)  # 不使用inplace
+        else:
+            y = F.relu(y, inplace=True)  # 使用inplace
+            
+        y = self.linear2(y)
+        y = self.sigmoid(y).view(b, c, 1)
+        return x * y
+
+# 删除重复的forward方法，只保留上面这个正确的版本
+class SHAPOptimizedCNN(nn.Module):
+    def __init__(self, input_size, num_classes=4):
+        super(SHAPOptimizedCNN, self).__init__()
+        
+        # 针对SHAP筛选特征的轻量设计
+        self.feature_extractor = nn.Sequential(
+            nn.Conv1d(1, 16, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm1d(16),
+            nn.ReLU(),
+            nn.Conv1d(16, 32, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm1d(32),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool1d(16)  # 固定输出长度
+        )
+        
+        # 注意力机制
+        self.attention = nn.Sequential(
+            nn.Linear(32, 8),
+            nn.ReLU(),
+            nn.Linear(8, 32),
+            nn.Sigmoid()
+        )
+        
+        # 分类器
+        self.classifier = nn.Sequential(
+            nn.Linear(32 * 16, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(64, num_classes)
+        )
+
+    def forward(self, x):
+        x = x.unsqueeze(1)
+        
+        # 特征提取
+        features = self.feature_extractor(x)  # [batch, 32, 16]
+        
+        # 全局平均池化用于注意力
+        gap = F.adaptive_avg_pool1d(features, 1).squeeze(-1)  # [batch, 32]
+        attention_weights = self.attention(gap).unsqueeze(-1)  # [batch, 32, 1]
+        
+        # 应用注意力
+        attended_features = features * attention_weights  # [batch, 32, 16]
+        
+        # 分类
+        x = attended_features.view(attended_features.size(0), -1)
+        x = self.classifier(x)
+        return x
+    
+class OptimizedMultiScaleCNN(nn.Module):
+    def __init__(self, input_size, num_classes=4):
+        super(OptimizedMultiScaleCNN, self).__init__()
+        
+        # 根据输入维度调整卷积核大小
+        kernel_sizes = self._get_adaptive_kernel_sizes(input_size)
+        
+        # 第一层多尺度卷积 - 适应性调整通道数
+        out_channels_per_scale = max(8, input_size // 10)  # 根据输入维度调整
+        self.conv3 = nn.Conv1d(1, out_channels_per_scale, kernel_size=kernel_sizes[0], stride=1, padding=kernel_sizes[0]//2)
+        self.conv5 = nn.Conv1d(1, out_channels_per_scale, kernel_size=kernel_sizes[1], stride=1, padding=kernel_sizes[1]//2)
+        self.conv7 = nn.Conv1d(1, out_channels_per_scale, kernel_size=kernel_sizes[2], stride=1, padding=kernel_sizes[2]//2)
+        
+        total_channels = out_channels_per_scale * 3
+        self.bn1 = nn.BatchNorm1d(total_channels)
+        self.dropout1 = nn.Dropout(0.3)
+        
+        # 自适应池化层
+        pool_size = max(2, min(4, input_size // 20))
+        self.pool1 = nn.MaxPool1d(kernel_size=pool_size)
+
+        # 后续卷积层 - 简化结构
+        self.conv2 = nn.Conv1d(total_channels, total_channels * 2, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm1d(total_channels * 2)
+        self.dropout2 = nn.Dropout(0.3)
+        self.pool2 = nn.MaxPool1d(kernel_size=2)
+
+        # 计算全连接层输入尺寸
+        self.seq_len = input_size // (pool_size * 2)
+        fc_input_size = self.seq_len * total_channels * 2
+        
+        # 简化全连接层
+        self.fc_layers = nn.Sequential(
+            nn.Linear(fc_input_size, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Dropout(0.4),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, num_classes)
+        )
+
+    def _get_adaptive_kernel_sizes(self, input_size):
+        """根据输入维度自适应调整卷积核大小"""
+        if input_size < 50:
+            return [3, 5, 7]
+        elif input_size < 100:
+            return [3, 7, 11]
+        else:
+            return [5, 9, 13]
+
+    def forward(self, x):
+        x = x.unsqueeze(1)  # (batch_size, 1, input_size)
+        
+        # 多尺度卷积
+        x1 = self.conv3(x)
+        x2 = self.conv5(x)
+        x3 = self.conv7(x)
+        x = torch.cat([x1, x2, x3], dim=1)
+        
+        x = F.relu(self.bn1(x))
+        x = self.dropout1(x)
+        x = self.pool1(x)
+
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = self.dropout2(x)
+        x = self.pool2(x)
+
+        x = x.reshape(x.size(0), -1)
+        x = self.fc_layers(x)
+        return x
 # ====================== 3. 训练函数（增加保存路径参数） ======================
 def train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs=50, device='cuda', model_save_path='best_cwru_model.pth'):
     torch.backends.cudnn.benchmark = True
@@ -410,15 +861,30 @@ class DeepSHAP:
         self.model = model.to(device)
         self.device = device
         background = torch.tensor(background_data, dtype=torch.float32).to(device)
+        
+        # 在创建explainer之前设置SHAP模式
+        if hasattr(self.model, 'set_shap_mode'):
+            self.model.set_shap_mode(True)
+            
         self.explainer = shap.DeepExplainer(self.model, background)
 
     def explain(self, test_data, class_index=None):
-        was_training = self.model.training  # 记录原始模式
+        was_training = self.model.training
+        
+        # 确保SHAP模式开启
+        if hasattr(self.model, 'set_shap_mode'):
+            self.model.set_shap_mode(True)
+            
         self.model.train()  # 切换到训练模式
         test_tensor = torch.tensor(test_data, dtype=torch.float32).to(self.device)
         shap_values = self.explainer.shap_values(test_tensor, check_additivity=False)
+        
+        # 恢复原始状态
+        if hasattr(self.model, 'set_shap_mode'):
+            self.model.set_shap_mode(False)
         if not was_training:
-            self.model.eval()  # 恢复原始模式
+            self.model.eval()
+            
         if isinstance(shap_values, list):
             return shap_values[class_index] if class_index is not None else shap_values
         else:
@@ -530,12 +996,12 @@ if __name__ == "__main__":
     root_dir = r"E:\Artifical intelligence 666\\某人的本科毕设\\本科毕业设计\\可解释性机器学习\\数据预处理\\cwru数据集处理后"
     batch_size = 32
     num_epochs = 30
-    learning_rate = 0.00082   #resnet的训练率0.0002；cnn的训练率0.00082
+    learning_rate = 0.0005   #resnet的训练率0.0002；cnn的训练率0.00082
     feature_size = 448
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     skip_original_training = False  # 跳过原始模型训练
     skip_top_training = False  # 跳过筛选后模型训练
-    desired_snr_db = 50  # 设置信噪比（单位dB），例如20dB，可自行调整
+    desired_snr_db = 10  # 设置信噪比（单位dB），例如20dB，可自行调整
 
     print(f"当前设备: {device}")
    
@@ -558,10 +1024,11 @@ if __name__ == "__main__":
 
     # 2. 原始模型处理
     print("[2/10] 处理原始模型...")
-    model_original = CWRUCNN_LightSE(input_size=feature_size, num_classes=4)
-    #model_original = Resnet14(input_size=feature_size, num_classes=4)
+    model_original = CWRUCNN_LightSE_Ultra(input_size=feature_size, num_classes=4)
+    
+    #model_original = ResNet18_1D(input_size=feature_size, num_classes=4)
     #model_original = MultiScaleCNN(input_size=feature_size, num_classes=4)
-    #model_original = CNN_AttentionNet(input_size=feature_size, num_classes=4)
+    #model_original = DeepCNN(input_size=feature_size, num_classes=4)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model_original.parameters(), lr=learning_rate, weight_decay=3e-4)
     model_save_path_original = 'best_cwru_original_model.pth'
@@ -582,11 +1049,24 @@ if __name__ == "__main__":
                 f"未找到原始模型文件 {model_save_path_original}，请先设置 skip_original_training=False 进行训练")
         model_original.load_state_dict(torch.load(model_save_path_original))
 
-    # 3. SHAP分析并提取TOP特征
+    # 在主函数的SHAP分析部分修改：
+# 3. SHAP分析并提取TOP特征
     print("[5/10] 执行SHAP分析并提取关键特征...")
     background_indices = np.random.choice(len(train_dataset), size=min(100, len(train_dataset)), replace=False)
     background_data = np.array([train_dataset[idx][0].numpy() for idx in background_indices])
+
+# 确保模型处于正确模式
+    model_original.eval()  # 设置为评估模式
+    if hasattr(model_original, 'set_shap_mode'):
+            model_original.set_shap_mode(True)  # 开启SHAP模式
+
     deep_shap = DeepSHAP(model_original, background_data, device)
+
+# ... SHAP分析代码保持不变 ...
+
+# SHAP分析完成后恢复训练模式
+    if hasattr(model_original, 'set_shap_mode'):
+        model_original.set_shap_mode(False)  # 关闭SHAP模式
 
     class_test_data = {cls: [] for cls in range(4)}
     class_test_indices = {cls: [] for cls in range(4)}  # 新增：记录每个类别的样本索引
@@ -649,7 +1129,7 @@ if __name__ == "__main__":
     print(f"[7/10] 处理TOP特征模型（输入尺寸={len(selected_features)}）...")
     
    
-    model_top = MultiScaleCNN(input_size=len(selected_features), num_classes=4)
+    model_top = SHAPOptimizedCNN(input_size=len(selected_features), num_classes=4)
     criterion_top = nn.CrossEntropyLoss()
     optimizer_top = optim.Adam(model_top.parameters(), lr=learning_rate)
     model_save_path_top = 'best_cwru_top_model.pth'
