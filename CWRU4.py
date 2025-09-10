@@ -470,7 +470,6 @@ class OptimizedLightSEModule(nn.Module):
         y = self.fc(y).view(b, c, 1)
         return x * y
     
-
 class CWRUCNN_LightSE_Ultra(nn.Module):
     def __init__(self, input_size, num_classes=4):
         super().__init__()
@@ -490,16 +489,19 @@ class CWRUCNN_LightSE_Ultra(nn.Module):
         
         # 计算feature map尺寸: input_size // 8 (三次stride=2)
         fc_input_size = (input_size // 8) * 32
+        
+        # 简化全连接层，减少正则化
         self.fc = nn.Sequential(
-            nn.Linear(fc_input_size, 32, bias=False),
-            nn.BatchNorm1d(32),
-            nn.ReLU(),  # 这里保持不变
-            nn.Linear(32, num_classes)
+            nn.Linear(fc_input_size, 64, bias=False),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Dropout(0.1),  # 只保留轻微dropout
+            nn.Linear(64, num_classes)
         )
         
         # 添加SHAP模式标志
         self.shap_mode = False
-
+        
     def set_shap_mode(self, mode=True):
         """设置SHAP分析模式，关闭inplace操作"""
         self.shap_mode = mode
@@ -535,9 +537,7 @@ class CWRUCNN_LightSE_Ultra(nn.Module):
         
         x = x.view(x.size(0), -1)
         return self.fc(x)
-
-# 定义 UltraLightSEModule
-# 修复 UltraLightSEModule 类
+    
 class UltraLightSEModule(nn.Module):
     def __init__(self, channels, reduction=16):
         super().__init__()
@@ -568,139 +568,25 @@ class UltraLightSEModule(nn.Module):
         y = self.sigmoid(y).view(b, c, 1)
         return x * y
 
-# 删除重复的forward方法，只保留上面这个正确的版本
-class SHAPOptimizedCNN(nn.Module):
-    def __init__(self, input_size, num_classes=4):
-        super(SHAPOptimizedCNN, self).__init__()
-        
-        # 针对SHAP筛选特征的轻量设计
-        self.feature_extractor = nn.Sequential(
-            nn.Conv1d(1, 16, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm1d(16),
-            nn.ReLU(),
-            nn.Conv1d(16, 32, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm1d(32),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool1d(16)  # 固定输出长度
-        )
-        
-        # 注意力机制
-        self.attention = nn.Sequential(
-            nn.Linear(32, 8),
-            nn.ReLU(),
-            nn.Linear(8, 32),
-            nn.Sigmoid()
-        )
-        
-        # 分类器
-        self.classifier = nn.Sequential(
-            nn.Linear(32 * 16, 128),
-            nn.BatchNorm1d(128),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(64, num_classes)
-        )
 
-    def forward(self, x):
-        x = x.unsqueeze(1)
-        
-        # 特征提取
-        features = self.feature_extractor(x)  # [batch, 32, 16]
-        
-        # 全局平均池化用于注意力
-        gap = F.adaptive_avg_pool1d(features, 1).squeeze(-1)  # [batch, 32]
-        attention_weights = self.attention(gap).unsqueeze(-1)  # [batch, 32, 1]
-        
-        # 应用注意力
-        attended_features = features * attention_weights  # [batch, 32, 16]
-        
-        # 分类
-        x = attended_features.view(attended_features.size(0), -1)
-        x = self.classifier(x)
-        return x
-    
-class OptimizedMultiScaleCNN(nn.Module):
-    def __init__(self, input_size, num_classes=4):
-        super(OptimizedMultiScaleCNN, self).__init__()
-        
-        # 根据输入维度调整卷积核大小
-        kernel_sizes = self._get_adaptive_kernel_sizes(input_size)
-        
-        # 第一层多尺度卷积 - 适应性调整通道数
-        out_channels_per_scale = max(8, input_size // 10)  # 根据输入维度调整
-        self.conv3 = nn.Conv1d(1, out_channels_per_scale, kernel_size=kernel_sizes[0], stride=1, padding=kernel_sizes[0]//2)
-        self.conv5 = nn.Conv1d(1, out_channels_per_scale, kernel_size=kernel_sizes[1], stride=1, padding=kernel_sizes[1]//2)
-        self.conv7 = nn.Conv1d(1, out_channels_per_scale, kernel_size=kernel_sizes[2], stride=1, padding=kernel_sizes[2]//2)
-        
-        total_channels = out_channels_per_scale * 3
-        self.bn1 = nn.BatchNorm1d(total_channels)
-        self.dropout1 = nn.Dropout(0.3)
-        
-        # 自适应池化层
-        pool_size = max(2, min(4, input_size // 20))
-        self.pool1 = nn.MaxPool1d(kernel_size=pool_size)
 
-        # 后续卷积层 - 简化结构
-        self.conv2 = nn.Conv1d(total_channels, total_channels * 2, kernel_size=3, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm1d(total_channels * 2)
-        self.dropout2 = nn.Dropout(0.3)
-        self.pool2 = nn.MaxPool1d(kernel_size=2)
-
-        # 计算全连接层输入尺寸
-        self.seq_len = input_size // (pool_size * 2)
-        fc_input_size = self.seq_len * total_channels * 2
-        
-        # 简化全连接层
-        self.fc_layers = nn.Sequential(
-            nn.Linear(fc_input_size, 64),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.Dropout(0.4),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Linear(32, num_classes)
-        )
-
-    def _get_adaptive_kernel_sizes(self, input_size):
-        """根据输入维度自适应调整卷积核大小"""
-        if input_size < 50:
-            return [3, 5, 7]
-        elif input_size < 100:
-            return [3, 7, 11]
-        else:
-            return [5, 9, 13]
-
-    def forward(self, x):
-        x = x.unsqueeze(1)  # (batch_size, 1, input_size)
-        
-        # 多尺度卷积
-        x1 = self.conv3(x)
-        x2 = self.conv5(x)
-        x3 = self.conv7(x)
-        x = torch.cat([x1, x2, x3], dim=1)
-        
-        x = F.relu(self.bn1(x))
-        x = self.dropout1(x)
-        x = self.pool1(x)
-
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = self.dropout2(x)
-        x = self.pool2(x)
-
-        x = x.reshape(x.size(0), -1)
-        x = self.fc_layers(x)
-        return x
 # ====================== 3. 训练函数（增加保存路径参数） ======================
 def train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs=50, device='cuda', model_save_path='best_cwru_model.pth'):
     torch.backends.cudnn.benchmark = True
     if device == 'cuda':
         torch.cuda.empty_cache()
     model.to(device)
+    
+    # 添加学习率调度器
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='max', factor=0.8, patience=5, verbose=True, min_lr=1e-6
+    )
+    
+    # 早停机制
     best_val_acc = 0.0
-
+    patience_counter = 0
+    patience = 15  # 增加patience
+    
     train_losses = []
     train_accuracies = []
     val_losses = []
@@ -716,14 +602,16 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
             outputs = model(inputs)
             loss = criterion(outputs, labels)
             loss.backward()
+            
+            # 温和的梯度裁剪
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            
             optimizer.step()
 
             running_loss += loss.item() * inputs.size(0)
             _, predicted = torch.max(outputs, 1)
             correct += (predicted == labels).sum().item()
             total += labels.size(0)
-            
-           
         
         epoch_train_loss = running_loss / total
         epoch_train_acc = correct / total
@@ -748,20 +636,30 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
         val_losses.append(epoch_val_loss)
         val_accuracies.append(epoch_val_acc)
 
-        
+        # 学习率调度
+        scheduler.step(epoch_val_acc)
+        current_lr = optimizer.param_groups[0]['lr']
 
         if epoch % 2 == 0:
             print(f'Epoch {epoch + 1}/{num_epochs} | '
                   f'Train Loss: {epoch_train_loss:.4f} Acc: {epoch_train_acc:.4f} | '
-                  f'Val Loss: {epoch_val_loss:.4f} Acc: {epoch_val_acc:.4f}')
+                  f'Val Loss: {epoch_val_loss:.4f} Acc: {epoch_val_acc:.4f} | '
+                  f'LR: {current_lr:.6f}')
 
         if epoch_val_acc > best_val_acc:
             best_val_acc = epoch_val_acc
+            patience_counter = 0
             torch.save(model.state_dict(), model_save_path)
+        else:
+            patience_counter += 1
+            
+        # 早停
+        if patience_counter >= patience:
+            print(f"Early stopping at epoch {epoch+1}")
+            break
 
     print(f'\n训练完成！最佳验证准确率: {best_val_acc:.4f}')
     return model_save_path, train_losses, train_accuracies, val_losses, val_accuracies
-
 
 # ====================== 4. 评估函数（保持不变） ======================
 def evaluate_model(model, test_loader, device='cuda'):
@@ -791,11 +689,13 @@ def evaluate_model(model, test_loader, device='cuda'):
 
 
 # ====================== 5. 新增：训练曲线可视化函数 ======================
-def plot_training_curves(train_losses, train_accuracies, val_losses, val_accuracies, num_epochs, title_prefix=""):
+def plot_training_curves(train_losses, train_accuracies, val_losses, val_accuracies, num_epochs=None, title_prefix=""):
     import numpy as np
     plt.figure(figsize=(12, 6))
 
-    epochs = list(range(1, num_epochs + 1))
+    # 使用实际的训练轮数，而不是预设的num_epochs
+    actual_epochs = len(train_losses)  # 使用实际的训练轮数
+    epochs = list(range(1, actual_epochs + 1))
 
     # 损失曲线
     plt.subplot(1, 2, 1)
@@ -805,11 +705,17 @@ def plot_training_curves(train_losses, train_accuracies, val_losses, val_accurac
     plt.ylabel('损失')
     plt.title(f'{title_prefix}训练与验证损失曲线')
     plt.legend()
-    plt.xticks(epochs)  # 横坐标每单位为1
+    
+    # 设置x轴刻度
+    if actual_epochs <= 10:
+        plt.xticks(epochs)  # 如果轮数少，显示所有epoch
+    else:
+        plt.xticks(range(1, actual_epochs + 1, max(1, actual_epochs // 10)))  # 否则显示大约10个刻度
+    
     # 设置更详细的纵坐标刻度
     loss_min = min(train_losses + val_losses)
     loss_max = max(train_losses + val_losses)
-    plt.yticks(np.linspace(loss_min, loss_max, num=15))  # 15个刻度，可根据需要调整
+    plt.yticks(np.linspace(loss_min, loss_max, num=10))  # 减少到10个刻度
     plt.tick_params(axis='y', labelsize=10)
 
     # 准确率曲线
@@ -820,11 +726,17 @@ def plot_training_curves(train_losses, train_accuracies, val_losses, val_accurac
     plt.ylabel('准确率')
     plt.title(f'{title_prefix}训练与验证准确率曲线')
     plt.legend()
-    plt.xticks(epochs)  # 横坐标每单位为1
+    
+    # 设置x轴刻度
+    if actual_epochs <= 10:
+        plt.xticks(epochs)  # 如果轮数少，显示所有epoch
+    else:
+        plt.xticks(range(1, actual_epochs + 1, max(1, actual_epochs // 10)))  # 否则显示大约10个刻度
+    
     # 设置更详细的纵坐标刻度
     acc_min = min(train_accuracies + val_accuracies)
     acc_max = max(train_accuracies + val_accuracies)
-    plt.yticks(np.linspace(acc_min, acc_max, num=15))  # 15个刻度，可根据需要调整
+    plt.yticks(np.linspace(acc_min, acc_max, num=10))  # 减少到10个刻度
     plt.tick_params(axis='y', labelsize=10)
 
     plt.tight_layout()
@@ -1001,7 +913,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     skip_original_training = False  # 跳过原始模型训练
     skip_top_training = False  # 跳过筛选后模型训练
-    desired_snr_db = 10  # 设置信噪比（单位dB），例如20dB，可自行调整
+    desired_snr_db = 15  # 设置信噪比（单位dB），例如20dB，可自行调整
 
     print(f"当前设备: {device}")
    
@@ -1030,7 +942,12 @@ if __name__ == "__main__":
     #model_original = MultiScaleCNN(input_size=feature_size, num_classes=4)
     #model_original = DeepCNN(input_size=feature_size, num_classes=4)
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model_original.parameters(), lr=learning_rate, weight_decay=3e-4)
+    optimizer = optim.Adam(
+        model_original.parameters(), 
+        lr=learning_rate, 
+        weight_decay=1e-5,  # 大幅减少权重衰减
+        betas=(0.9, 0.999)
+    )
     model_save_path_original = 'best_cwru_original_model.pth'
 
     if not skip_original_training:
@@ -1129,7 +1046,7 @@ if __name__ == "__main__":
     print(f"[7/10] 处理TOP特征模型（输入尺寸={len(selected_features)}）...")
     
    
-    model_top = SHAPOptimizedCNN(input_size=len(selected_features), num_classes=4)
+    model_top = MultiScaleCNN(input_size=len(selected_features), num_classes=4)
     criterion_top = nn.CrossEntropyLoss()
     optimizer_top = optim.Adam(model_top.parameters(), lr=learning_rate)
     model_save_path_top = 'best_cwru_top_model.pth'
@@ -1150,23 +1067,26 @@ if __name__ == "__main__":
         model_top.load_state_dict(torch.load(model_save_path_top))
 
     # 6. 评估与可视化（仅在训练后执行，跳过训练时可注释以下部分）
-    if not skip_original_training or not skip_top_training:
-        # 原始模型可视化（需训练后执行）
-        if not skip_original_training:
-            print("[8/10] 可视化原始模型训练曲线...")
-            plot_training_curves(train_losses_original, train_accuracies_original, val_losses_original,
-                                 val_accuracies_original, num_epochs, "原始模型 ")
-            print("[8/20] 评估原始模型并可视化混淆矩阵...")
-            y_true_original, y_pred_original, conf_matrix_original = evaluate_model(model_original, test_loader, device)
-            plot_confusion_matrix(conf_matrix_original, class_names, "原始模型混淆矩阵")
+    # 在主函数的可视化部分修改调用方式：
+if not skip_original_training or not skip_top_training:
+    # 原始模型可视化（需训练后执行）
+    if not skip_original_training:
+        print("[8/10] 可视化原始模型训练曲线...")
+        # 移除num_epochs参数，让函数自动计算
+        plot_training_curves(train_losses_original, train_accuracies_original, val_losses_original,
+                             val_accuracies_original, title_prefix="原始模型 ")
+        print("[8/20] 评估原始模型并可视化混淆矩阵...")
+        y_true_original, y_pred_original, conf_matrix_original = evaluate_model(model_original, test_loader, device)
+        plot_confusion_matrix(conf_matrix_original, class_names, "原始模型混淆矩阵")
 
-        # 筛选后模型可视化（需训练后执行）
-        if not skip_top_training:
-            print("[9/10] 可视化TOP特征模型训练曲线...")
-            plot_training_curves(train_losses_top, train_accuracies_top, val_losses_top, val_accuracies_top, num_epochs,
-                                 "TOP特征模型 ")
-            print("[10/10] 评估TOP特征模型并可视化混淆矩阵...")
-            y_true_top, y_pred_top, conf_matrix_top = evaluate_model(model_top, test_loader_top, device)
-            plot_confusion_matrix(conf_matrix_top, class_names, "TOP特征模型混淆矩阵")
+    # 筛选后模型可视化（需训练后执行）
+    if not skip_top_training:
+        print("[9/10] 可视化TOP特征模型训练曲线...")
+        # 移除num_epochs参数，让函数自动计算
+        plot_training_curves(train_losses_top, train_accuracies_top, val_losses_top, val_accuracies_top,
+                             title_prefix="TOP特征模型 ")
+        print("[10/10] 评估TOP特征模型并可视化混淆矩阵...")
+        y_true_top, y_pred_top, conf_matrix_top = evaluate_model(model_top, test_loader_top, device)
+        plot_confusion_matrix(conf_matrix_top, class_names, "TOP特征模型混淆矩阵")
 
     print("\n全流程执行完毕！")
