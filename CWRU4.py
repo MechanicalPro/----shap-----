@@ -489,19 +489,16 @@ class CWRUCNN_LightSE_Ultra(nn.Module):
         
         # 计算feature map尺寸: input_size // 8 (三次stride=2)
         fc_input_size = (input_size // 8) * 32
-        
-        # 简化全连接层，减少正则化
         self.fc = nn.Sequential(
-            nn.Linear(fc_input_size, 64, bias=False),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.Dropout(0.1),  # 只保留轻微dropout
-            nn.Linear(64, num_classes)
+            nn.Linear(fc_input_size, 32, bias=False),
+            nn.BatchNorm1d(32),
+            nn.ReLU(),  # 这里保持不变
+            nn.Linear(32, num_classes)
         )
         
         # 添加SHAP模式标志
         self.shap_mode = False
-        
+
     def set_shap_mode(self, mode=True):
         """设置SHAP分析模式，关闭inplace操作"""
         self.shap_mode = mode
@@ -567,7 +564,6 @@ class UltraLightSEModule(nn.Module):
         y = self.linear2(y)
         y = self.sigmoid(y).view(b, c, 1)
         return x * y
-
 
 
 # ====================== 3. 训练函数（增加保存路径参数） ======================
@@ -913,7 +909,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     skip_original_training = False  # 跳过原始模型训练
     skip_top_training = False  # 跳过筛选后模型训练
-    desired_snr_db = 15  # 设置信噪比（单位dB），例如20dB，可自行调整
+    desired_snr_db = 10 # 设置信噪比（单位dB），例如20dB，可自行调整
 
     print(f"当前设备: {device}")
    
@@ -1045,7 +1041,7 @@ if __name__ == "__main__":
     # 5. 筛选后模型处理
     print(f"[7/10] 处理TOP特征模型（输入尺寸={len(selected_features)}）...")
     
-   
+
     model_top = MultiScaleCNN(input_size=len(selected_features), num_classes=4)
     criterion_top = nn.CrossEntropyLoss()
     optimizer_top = optim.Adam(model_top.parameters(), lr=learning_rate)
