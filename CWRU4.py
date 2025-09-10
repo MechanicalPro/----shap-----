@@ -895,6 +895,226 @@ def visualize_single_sample_shap(shap_values_dict, sample_data_dict, feature_nam
         plt.show()
    
 
+def refined_feature_selection(class_shap_values, feature_names, class_names, initial_selected_features, threshold_ratio=0.9):
+    """
+    二次特征筛选函数：移除低质量特征，只保留真正有益的特征
+    
+    Parameters:
+    - class_shap_values: 各类别的SHAP值字典
+    - feature_names: 特征名称列表
+    - class_names: 类别名称列表
+    - initial_selected_features: 初步筛选的特征索引列表
+    - threshold_ratio: 保留的特征比例，默认保留75%最优特征
+    
+    Returns:
+    - refined_features: 精选后的特征索引列表
+    """
+    print(f"\n=== 执行二次特征筛选（移除低质量特征）===")
+    print(f"初步特征数量: {len(initial_selected_features)}")
+    
+    if len(initial_selected_features) <= 10:
+        print("特征数量较少，跳过二次筛选")
+        return initial_selected_features
+    
+    # 1. 计算每个初步特征的质量得分
+    feature_quality_scores = {}
+    feature_stability_scores = {}
+    feature_consistency_scores = {}
+    
+    for feature_idx in initial_selected_features:
+        quality_score = 0
+        stability_score = 0
+        consistency_score = 0
+        valid_classes = 0
+        
+        for cls_idx in range(4):
+            if cls_idx not in class_shap_values or class_shap_values[cls_idx] is None:
+                continue
+                
+            cls_shap = class_shap_values[cls_idx]
+            if feature_idx >= cls_shap.shape[1]:
+                continue
+                
+            # 重要性：平均绝对SHAP值
+            importance = np.abs(cls_shap[:, feature_idx]).mean()
+            
+            # 稳定性：标准差的倒数（标准差越小越稳定）
+            stability = 1.0 / (1.0 + np.std(cls_shap[:, feature_idx]))
+            
+            # 一致性：符号一致性（同一类别内SHAP值符号的一致性）
+            consistency = np.abs(np.mean(np.sign(cls_shap[:, feature_idx])))
+            
+            quality_score += importance
+            stability_score += stability
+            consistency_score += consistency
+            valid_classes += 1
+        
+        if valid_classes > 0:
+            # 标准化得分
+            feature_quality_scores[feature_idx] = quality_score / valid_classes
+            feature_stability_scores[feature_idx] = stability_score / valid_classes
+            feature_consistency_scores[feature_idx] = consistency_score / valid_classes
+    
+    # 2. 计算综合得分：重要性 × 稳定性 × 一致性
+    comprehensive_scores = {}
+    for feature_idx in initial_selected_features:
+        if feature_idx in feature_quality_scores:
+            comprehensive_scores[feature_idx] = (
+                feature_quality_scores[feature_idx] * 0.5 +  # 重要性权重50%
+                feature_stability_scores[feature_idx] * 0.3 +  # 稳定性权重30%
+                feature_consistency_scores[feature_idx] * 0.2   # 一致性权重20%
+            )
+    
+    # 3. 筛选高质量特征
+    if len(comprehensive_scores) == 0:
+        return initial_selected_features
+    
+    scores_list = list(comprehensive_scores.values())
+    threshold = np.percentile(scores_list, (1-threshold_ratio)*100)
+    
+    # 保留高于阈值的特征
+    refined_features = []
+    for feature_idx, score in comprehensive_scores.items():
+        if score > threshold:
+            refined_features.append(feature_idx)
+    
+    # 确保至少保留一定数量的特征
+    min_features = max(8, len(initial_selected_features) // 2)
+    if len(refined_features) < min_features:
+        # 如果筛选后特征太少，按得分排序取前min_features个
+        sorted_features = sorted(comprehensive_scores.items(), key=lambda x: x[1], reverse=True)
+        refined_features = [idx for idx, _ in sorted_features[:min_features]]
+    
+    refined_features = sorted(refined_features)
+    
+    print(f"二次筛选后特征数量: {len(refined_features)}")
+    print(f"移除的低质量特征数量: {len(initial_selected_features) - len(refined_features)}")
+    
+    # 4. 可视化筛选结果
+    _visualize_feature_selection_results(
+        initial_selected_features, refined_features, comprehensive_scores, 
+        feature_names, threshold, class_shap_values, class_names
+    )
+    
+    return refined_features
+
+def _visualize_feature_selection_results(initial_features, refined_features, comprehensive_scores, 
+                                       feature_names, threshold, class_shap_values, class_names):
+    """可视化二次筛选结果的内部函数"""
+    
+    # 1. 特征质量得分分布图
+    plt.figure(figsize=(15, 10))
+    
+    # 子图1: 特征得分分布
+    plt.subplot(2, 3, 1)
+    scores_list = list(comprehensive_scores.values())
+    removed_scores = [comprehensive_scores[idx] for idx in initial_features if idx not in refined_features]
+    kept_scores = [comprehensive_scores[idx] for idx in refined_features]
+    
+    plt.hist(scores_list, bins=20, alpha=0.7, color='lightblue', label='所有特征', edgecolor='black')
+    plt.hist(removed_scores, bins=20, alpha=0.8, color='red', label='移除特征')
+    plt.hist(kept_scores, bins=20, alpha=0.8, color='green', label='保留特征')
+    plt.axvline(threshold, color='orange', linestyle='--', linewidth=2, label=f'筛选阈值: {threshold:.3f}')
+    plt.xlabel('综合质量得分')
+    plt.ylabel('特征数量')
+    plt.title('特征质量得分分布')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    
+    # 子图2: 保留特征的得分排名
+    plt.subplot(2, 3, 2)
+    refined_scores = [(idx, comprehensive_scores[idx]) for idx in refined_features]
+    refined_scores.sort(key=lambda x: x[1], reverse=True)
+    
+    indices, scores = zip(*refined_scores[:15])  # 显示前15个
+    x_pos = np.arange(len(indices))
+    
+    bars = plt.bar(x_pos, scores, color='lightgreen', alpha=0.7, edgecolor='darkgreen')
+    plt.xlabel('特征排名')
+    plt.ylabel('综合得分')
+    plt.title(f'保留特征TOP15质量得分')
+    plt.xticks(x_pos[::2], [f'特征-{idx}' for idx in indices[::2]], rotation=45, fontsize=8)
+    plt.grid(True, alpha=0.3)
+    
+    # 添加数值标签
+    for i, (bar, score) in enumerate(zip(bars, scores)):
+        if i % 2 == 0:  # 只在偶数位置显示标签，避免拥挤
+            plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.001, 
+                    f'{score:.3f}', ha='center', va='bottom', fontsize=8)
+    
+    # 子图3: 移除vs保留特征对比
+    plt.subplot(2, 3, 3)
+    categories = ['移除特征', '保留特征']
+    counts = [len(initial_features) - len(refined_features), len(refined_features)]
+    colors = ['#FF6B6B', '#4ECDC4']
+    
+    wedges, texts, autotexts = plt.pie(counts, labels=categories, colors=colors, autopct='%1.1f%%', 
+                                      startangle=90, explode=(0.05, 0))
+    plt.title('特征筛选结果占比')
+    
+    # 美化饼图
+    for autotext in autotexts:
+        autotext.set_color('white')
+        autotext.set_weight('bold')
+        autotext.set_fontsize(10)
+    
+    # 子图4-6: 各类别中精选特征的重要性展示
+    for cls_idx in range(min(3, 4)):  # 显示前3个类别
+        plt.subplot(2, 3, 4 + cls_idx)
+        
+        if cls_idx not in class_shap_values or class_shap_values[cls_idx] is None:
+            plt.text(0.5, 0.5, f'{class_names[cls_idx]}\n无有效数据', 
+                    ha='center', va='center', transform=plt.gca().transAxes, fontsize=12)
+            plt.title(f'{class_names[cls_idx]}')
+            continue
+        
+        # 计算精选特征在该类别中的重要性
+        cls_shap = class_shap_values[cls_idx]
+        refined_importances = []
+        refined_names = []
+        
+        for feature_idx in refined_features:
+            if feature_idx < cls_shap.shape[1]:
+                importance = np.abs(cls_shap[:, feature_idx]).mean()
+                refined_importances.append(importance)
+                refined_names.append(f'特征-{feature_idx}')
+        
+        if refined_importances:
+            # 排序并显示TOP10
+            sorted_pairs = sorted(zip(refined_importances, refined_names), reverse=True)
+            top_10 = sorted_pairs[:10]
+            
+            if top_10:
+                importances, names = zip(*top_10)
+                y_pos = np.arange(len(names))
+                
+                bars = plt.barh(y_pos, importances, color=plt.cm.viridis(np.linspace(0, 1, len(importances))))
+                plt.yticks(y_pos, names, fontsize=8)
+                plt.xlabel('平均|SHAP值|', fontsize=9)
+                plt.title(f'{class_names[cls_idx]}\n精选特征重要性TOP10', fontsize=10)
+                plt.gca().invert_yaxis()
+                
+                # 添加数值标签
+                for i, (bar, imp) in enumerate(zip(bars, importances)):
+                    plt.text(bar.get_width() + max(importances) * 0.01, bar.get_y() + bar.get_height()/2, 
+                            f'{imp:.3f}', ha='left', va='center', fontsize=7)
+    
+    plt.tight_layout()
+    plt.savefig('feature_selection_analysis.png', dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    # 额外的统计信息
+    print(f"\n=== 特征筛选统计 ===")
+    print(f"筛选前特征数: {len(initial_features)}")
+    print(f"筛选后特征数: {len(refined_features)}")
+    print(f"筛选比例: {len(refined_features)/len(initial_features)*100:.1f}%")
+    print(f"质量阈值: {threshold:.4f}")
+    print(f"保留特征平均得分: {np.mean([comprehensive_scores[idx] for idx in refined_features]):.4f}")
+    print(f"移除特征平均得分: {np.mean([comprehensive_scores[idx] for idx in initial_features if idx not in refined_features]):.4f}" if len(initial_features) > len(refined_features) else "无移除特征")
+    
+    print(f"\n精选特征索引: {refined_features}")
+
+
 # ====================== 8. 主函数（支持跳过训练） ======================
 if __name__ == "__main__":
     torch.manual_seed(42)
@@ -997,7 +1217,7 @@ if __name__ == "__main__":
             class_shap_values[cls] = deep_shap.explain(class_test_data[cls], class_index=cls)
 
     feature_names = [f"频率特征-{i + 1}" for i in range(feature_size)]
-    selected_features = visualize_shap_values_by_class(class_shap_values, feature_names, class_names)
+    initial_selected_features = visualize_shap_values_by_class(class_shap_values, feature_names, class_names)
 
     # 新增：单个样本 SHAP 可视化
     print("[5/10] 生成各类别代表样本SHAP图...")
@@ -1019,6 +1239,19 @@ if __name__ == "__main__":
         feature_names=feature_names,
         class_names=class_names
     )
+
+    print("[5-2/10] 执行二次特征筛选...")
+    selected_features = refined_feature_selection(
+        class_shap_values=class_shap_values,
+        feature_names=feature_names, 
+        class_names=class_names,
+        initial_selected_features=initial_selected_features,
+        threshold_ratio=0.9  # 保留75%最优特征，可调整
+    )
+    print(f"\n=== 特征筛选完成 ===")
+    print(f"初步筛选特征数: {len(initial_selected_features)}")
+    print(f"最终精选特征数: {len(selected_features)}")
+    print(f"最终特征索引: {selected_features}")
 
     # 4. 使用TOP特征构建新数据集
     print(f"[6/10] 使用{len(selected_features)}个关键特征重新加载数据...")
